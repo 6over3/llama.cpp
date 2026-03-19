@@ -662,11 +662,12 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
             //
             // TODO: try to update the tensor API kernels to at least match the simdgroup performance
             if (getenv("GGML_METAL_TENSOR_ENABLE") == NULL &&
-                ![[dev->mtl_device name] containsString:@"M5"] &&
-                ![[dev->mtl_device name] containsString:@"M6"] &&
+                ![[dev->mtl_device name] containsString:@"A18"] &&
                 ![[dev->mtl_device name] containsString:@"A19"] &&
-                ![[dev->mtl_device name] containsString:@"A20"]) {
-                GGML_LOG_WARN("%s: tensor API disabled for pre-M5 and pre-A19 devices\n", __func__);
+                ![[dev->mtl_device name] containsString:@"A20"] &&
+                ![[dev->mtl_device name] containsString:@"M5"] &&
+                ![[dev->mtl_device name] containsString:@"M6"]) {
+                GGML_LOG_WARN("%s: tensor API disabled for pre-M5 and pre-A18 devices\n", __func__);
                 dev->props.has_tensor = false;
             }
 
@@ -1439,6 +1440,16 @@ ggml_metal_buffer_t ggml_metal_buffer_init(ggml_metal_device_t dev, size_t size,
 
     if (size_aligned > 0 && (res->all_data == NULL || res->buffers[0].metal == nil)) {
         GGML_LOG_ERROR("%s: error: failed to allocate buffer, size = %8.2f MiB\n", __func__, size_aligned / 1024.0 / 1024.0);
+        if (res->buffers[0].metal != nil) {
+            [res->buffers[0].metal release];
+        }
+        if (res->is_shared && res->owned && res->all_data != NULL) {
+#if TARGET_OS_OSX
+            vm_deallocate((vm_map_t)mach_task_self(), (vm_address_t)res->all_data, res->all_size);
+#else
+            free(res->all_data);
+#endif
+        }
         free(res);
         return NULL;
     }
@@ -1447,6 +1458,16 @@ ggml_metal_buffer_t ggml_metal_buffer_init(ggml_metal_device_t dev, size_t size,
 
     if (!ggml_metal_buffer_rset_init(res)) {
         GGML_LOG_ERROR("%s: error: failed to initialize residency set\n", __func__);
+        for (int i = 0; i < res->n_buffers; i++) {
+            [res->buffers[i].metal release];
+        }
+        if (res->is_shared && res->owned) {
+#if TARGET_OS_OSX
+            vm_deallocate((vm_map_t)mach_task_self(), (vm_address_t)res->all_data, res->all_size);
+#else
+            free(res->all_data);
+#endif
+        }
         free(res);
         return NULL;
     }
@@ -1498,6 +1519,9 @@ ggml_metal_buffer_t ggml_metal_buffer_map(ggml_metal_device_t dev, void * ptr, s
 
             if (res->buffers[res->n_buffers].metal == nil) {
                 GGML_LOG_ERROR("%s: error: failed to allocate buffer, size = %8.2f MiB\n", __func__, size_aligned / 1024.0 / 1024.0);
+                for (int j = 0; j < res->n_buffers; j++) {
+                    [res->buffers[j].metal release];
+                }
                 free(res);
                 return NULL;
             }
@@ -1525,6 +1549,9 @@ ggml_metal_buffer_t ggml_metal_buffer_map(ggml_metal_device_t dev, void * ptr, s
 
                 if (res->buffers[res->n_buffers].metal == nil) {
                     GGML_LOG_ERROR("%s: error: failed to allocate buffer, size = %8.2f MiB\n", __func__, size_step_aligned / 1024.0 / 1024.0);
+                    for (int j = 0; j < res->n_buffers; j++) {
+                        [res->buffers[j].metal release];
+                    }
                     free(res);
                     return NULL;
                 }
@@ -1544,6 +1571,9 @@ ggml_metal_buffer_t ggml_metal_buffer_map(ggml_metal_device_t dev, void * ptr, s
 
     if (!ggml_metal_buffer_rset_init(res)) {
         GGML_LOG_ERROR("%s: error: failed to initialize residency set\n", __func__);
+        for (int i = 0; i < res->n_buffers; i++) {
+            [res->buffers[i].metal release];
+        }
         free(res);
         return NULL;
     }
